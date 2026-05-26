@@ -27,7 +27,7 @@
   <div id="root"></div>
 
   <script type="text/babel">
-    const { useState, useEffect, useCallback, useRef } = React;
+    const { useState, useEffect, useCallback, useRef, useMemo } = React;
 
     const MONSTERS = [
       { id: 1, name: "勇気のライオン", emoji: "🦁", color: "bg-orange-200" },
@@ -74,13 +74,23 @@
     };
 
     // --- ミニゲームコンポーネント ---
-    function MiniGame({ monster, onFinish }) {
+    function MiniGame({ monsters, onFinish }) {
       const [timeLeft, setTimeLeft] = useState(10);
       const [coins, setCoins] = useState(0);
-      const [playerPos, setPlayerPos] = useState({x: 50, y: 50});
+      
+      const initialPositions = useMemo(() => {
+        return monsters.map((m) => ({
+          id: m.id,
+          emoji: m.emoji,
+          x: 50 + (Math.random() * 40 - 20),
+          y: 50 + (Math.random() * 40 - 20)
+        }));
+      }, [monsters]);
+
+      const [playerPositions, setPlayerPositions] = useState(initialPositions);
       const [coinPos, setCoinPos] = useState({x: Math.random() * 80 + 10, y: Math.random() * 80 + 10});
       
-      const playerRef = useRef({x: 50, y: 50});
+      const playersRef = useRef(initialPositions);
       const coinRef = useRef({x: coinPos.x, y: coinPos.y});
       const keysRef = useRef({ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false});
       const requestRef = useRef();
@@ -133,25 +143,30 @@
           if (timeLeft <= 0) return;
 
           const speed = 1.2;
-          let px = playerRef.current.x;
-          let py = playerRef.current.y;
+          let dx = 0;
+          let dy = 0;
 
-          if (keysRef.current.ArrowUp) py -= speed;
-          if (keysRef.current.ArrowDown) py += speed;
-          if (keysRef.current.ArrowLeft) px -= speed;
-          if (keysRef.current.ArrowRight) px += speed;
+          if (keysRef.current.ArrowUp) dy -= speed;
+          if (keysRef.current.ArrowDown) dy += speed;
+          if (keysRef.current.ArrowLeft) dx -= speed;
+          if (keysRef.current.ArrowRight) dx += speed;
 
-          px = Math.max(5, Math.min(95, px));
-          py = Math.max(5, Math.min(95, py));
+          const newPositions = playersRef.current.map(p => {
+            let px = p.x + dx;
+            let py = p.y + dy;
+            px = Math.max(5, Math.min(95, px));
+            py = Math.max(5, Math.min(95, py));
+            return { ...p, x: px, y: py };
+          });
 
-          playerRef.current = {x: px, y: py};
-          setPlayerPos({x: px, y: py});
+          playersRef.current = newPositions;
+          setPlayerPositions(newPositions);
 
           const cx = coinRef.current.x;
           const cy = coinRef.current.y;
-          const dist = Math.hypot(px - cx, py - cy);
+          const hit = newPositions.some(p => Math.hypot(p.x - cx, p.y - cy) < 10);
           
-          if (dist < 10) { 
+          if (hit) { 
             setCoins(c => c + 1);
             coinRef.current = {
               x: Math.random() * 80 + 10,
@@ -180,12 +195,15 @@
             </div>
             
             <div className="relative w-full h-80 bg-green-100 rounded-xl overflow-hidden border-2 border-green-300">
-              <div 
-                className="absolute text-5xl transform -translate-x-1/2 -translate-y-1/2 drop-shadow-md z-10"
-                style={{ left: `${playerPos.x}%`, top: `${playerPos.y}%` }}
-              >
-                {monster.emoji}
-              </div>
+              {playerPositions.map((p, index) => (
+                <div 
+                  key={p.id + '-' + index}
+                  className="absolute text-5xl transform -translate-x-1/2 -translate-y-1/2 drop-shadow-md z-10"
+                  style={{ left: `${p.x}%`, top: `${p.y}%` }}
+                >
+                  {p.emoji}
+                </div>
+              ))}
               <div 
                 className="absolute text-3xl transform -translate-x-1/2 -translate-y-1/2 drop-shadow-md animate-bounce"
                 style={{ left: `${coinPos.x}%`, top: `${coinPos.y}%` }}
@@ -290,27 +308,31 @@
         if (step === 'COM_ANSWER_DAY') {
           setTimeout(() => speak("My special day is October seventeenth."), 500);
         } else if (step === 'COM_ANSWER_WHY') {
-          setTimeout(() => speak("Because it is the day I ate Famichiki for the first time!"), 500);
+          setTimeout(() => speak("It's the day I ate Famichiki for the first time!"), 500);
         }
       }, [step, speak]);
 
-      // 翻訳API呼び出し
+      // 翻訳API呼び出し（強制的に「It's ~」の形にする）
       const handleTranslate = async () => {
         setStep('TRANSLATING');
         try {
-          const response = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(reason)}&langpair=ja|en`);
+          const queryText = `その日は${reason}です。`;
+          const response = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(queryText)}&langpair=ja|en`);
           const data = await response.json();
           let text = data.responseData.translatedText;
           if (text) {
-            text = text.charAt(0).toUpperCase() + text.slice(1);
+            // 翻訳結果の先頭によく付く主語・動詞などを削除する
+            text = text.replace(/^(the day is|that day is|it is|it's|that is|this is|because it is|because it's|because)\s+/i, '');
+            // 強制的に It's から始める
+            text = `It's ${text.charAt(0).toLowerCase() + text.slice(1)}`;
             setTranslatedReason(text);
           } else {
-            setTranslatedReason("Because it is a special day.");
+            setTranslatedReason("It's a special day.");
           }
           setStep('SPEAK_MY_WHY');
         } catch (error) {
           console.error("Translation error:", error);
-          setTranslatedReason("Because it is a special day.");
+          setTranslatedReason("It's a special day.");
           setStep('SPEAK_MY_WHY');
         }
       };
@@ -536,15 +558,18 @@
                 <p className="text-gray-500 mt-2">（どうして その日が とくべつなの？）</p>
               </div>
               <div className="bg-gray-50 p-6 rounded-2xl mb-6 text-left">
-                <p className="text-lg font-bold mb-2">その理由は…</p>
+                <p className="text-lg font-bold mb-2">その日は…</p>
                 <textarea 
                   value={reason} onChange={(e) => setReason(e.target.value)}
                   placeholder="例：祝日、行事、記念日、思い出に残っている日など"
                   className="w-full h-24 p-3 border-2 border-gray-300 rounded-xl font-bold resize-none mb-2"
                 />
-                <p className="font-bold text-right text-gray-700">だからです。</p>
-                <div className="mt-4 bg-yellow-50 p-4 rounded-xl border border-yellow-200 text-sm">
-                  <p className="text-gray-700 font-bold mb-2">💡 特別な日を思いつかない人は先生と相談しよう！</p>
+                <p className="font-bold text-right text-gray-700">です。</p>
+                <div className="mt-4 bg-yellow-50 p-4 rounded-xl border border-yellow-200 text-sm text-center">
+                  <p className="text-gray-700 font-bold mb-2">💡 特別な日を思いつかない人は、このサイトを見てみよう！</p>
+                  <a href="https://kids.yahoo.co.jp/today" target="_blank" rel="noopener noreferrer" className="inline-block bg-blue-100 text-blue-700 font-bold py-2 px-4 rounded-full mb-3 hover:bg-blue-200 transition">
+                    📅 今日は何の日？（Yahoo!きっず）
+                  </a>
                   <p className="text-red-600 font-bold text-xs">⚠️ 特別な日は、自分やほかの人のたん生日にはしないでね。</p>
                 </div>
               </div>
@@ -578,7 +603,15 @@
                 {recognitionText && <div className="mt-4 p-3 bg-gray-100 rounded-lg text-lg text-gray-700 italic">"{recognitionText}"</div>}
                 {feedbackMsg && <div className={`mt-4 text-xl font-bold ${feedbackMsg.includes('Excellent') ? 'text-green-500' : 'text-orange-500'}`}>{feedbackMsg}</div>}
               </div>
-              {failCount >= 5 && <button onClick={() => proceedToNext('MY_WHY')} className="bg-gray-300 py-3 px-6 rounded-xl font-bold mx-auto">⏭️ むずかしいので スキップ</button>}
+              <div className="flex flex-col gap-4 mt-4">
+                <button 
+                  onClick={() => setStep('ASK_WHY')}
+                  className="text-gray-500 underline text-sm py-2"
+                >
+                  やりなおす（日本語入力にもどる）
+                </button>
+                {failCount >= 5 && <button onClick={() => proceedToNext('MY_WHY')} className="bg-gray-300 py-3 px-6 rounded-xl font-bold mx-auto">⏭️ むずかしいので スキップ</button>}
+              </div>
             </div>
           </div>
         );
@@ -611,7 +644,7 @@
             <div className="max-w-lg w-full bg-white rounded-3xl shadow-xl p-8 border-4 border-teal-200 text-center">
               {renderHeader("コンピューターの こたえ")}
               <div className="mb-8">
-                <div className="bg-gray-200 w-24 h-24 rounded-full mx-auto mb-4 flex items-center justify-center text-4xl">💻</div>
+                <div className="bg-gray-200 w-24 h-24 rounded-full mx-auto mb-4 flex items-center justify-center text-4xl">👩‍🏫</div>
                 <button onClick={() => speak("My special day is October seventeenth.")} className="bg-teal-100 p-3 rounded-full text-teal-600 mx-auto mb-4 text-4xl">🔊</button>
                 <p className="text-2xl font-bold text-gray-700">"My special day is October seventeenth."</p>
                 <p className="text-gray-500 mt-2">（わたしの とくべつな日は 10月17日です。）</p>
@@ -649,9 +682,9 @@
             <div className="max-w-lg w-full bg-white rounded-3xl shadow-xl p-8 border-4 border-teal-200 text-center">
               {renderHeader("コンピューターの こたえ")}
               <div className="mb-8">
-                 <div className="bg-gray-200 w-24 h-24 rounded-full mx-auto mb-4 flex items-center justify-center text-4xl">💻</div>
-                <button onClick={() => speak("Because it is the day I ate Famichiki for the first time!")} className="bg-teal-100 p-3 rounded-full text-teal-600 mx-auto mb-4 text-4xl">🔊</button>
-                <p className="text-xl font-bold text-gray-700">"Because it is the day I ate Famichiki for the first time!"</p>
+                 <div className="bg-gray-200 w-24 h-24 rounded-full mx-auto mb-4 flex items-center justify-center text-4xl">👩‍🏫</div>
+                <button onClick={() => speak("It's the day I ate Famichiki for the first time!")} className="bg-teal-100 p-3 rounded-full text-teal-600 mx-auto mb-4 text-4xl">🔊</button>
+                <p className="text-xl font-bold text-gray-700">"It's the day I ate Famichiki for the first time!"</p>
                 <p className="text-gray-500 mt-2 text-sm">（ファミチキをはじめて食べた日だからです！）</p>
               </div>
               <button onClick={() => { playCount === 0 ? setStep('NOTEBOOK') : prepareQuiz(); }} className="w-full bg-blue-500 hover:bg-blue-600 text-white text-xl font-bold py-4 rounded-xl">つぎへ</button>
@@ -670,13 +703,38 @@
               <div className="bg-white border-2 border-gray-300 p-8 rounded-lg shadow-inner mb-8 bg-[url('https://www.transparenttextures.com/patterns/lined-paper-2.png')]">
                 <p className="text-gray-600 mb-4 font-bold text-lg">あとで はっぴょうするので、じぶんの いったことを ワークシートに うつしてね。</p>
                 <div className="text-xl font-mono text-gray-800 leading-loose border-b-2 border-dashed border-gray-400 mb-4 pb-2">
-                  My special day is {MONTHS[selectedMonth - 1]} {getOrdinal(selectedDate)}.<br/>
-                  Because {translatedReason.toLowerCase()}
+                  My special day is <span className="font-bold text-blue-700 bg-blue-100 px-2 py-1 rounded shadow-sm">{MONTHS[selectedMonth - 1]} {getOrdinal(selectedDate)}</span>.<br/>
+                  <span className="font-bold text-blue-700 bg-blue-100 px-3 py-1 rounded shadow-sm inline-block mt-2">{translatedReason}</span>
                 </div>
-                <div className="text-sm text-gray-500">（にほんごのりゆう：{reason}）</div>
+                <div className="text-sm text-gray-500 mt-2">（にほんごのりゆう：その日は{reason}です。）</div>
               </div>
               <div className="bg-red-50 p-6 rounded-xl border border-red-200 text-center mb-8">
-                <p className="text-red-700 font-bold text-lg mb-2">ワークシートが かけたら、先生を よんで スタンプを もらいましょう！</p>
+                <p className="text-red-700 font-bold text-lg mb-2">ワークシートが かけたら、下のボタンを おしてね！</p>
+              </div>
+              <button onClick={() => setStep('NOTEBOOK_STAMP')} className="w-full bg-blue-500 hover:bg-blue-600 text-white text-2xl font-bold py-4 rounded-xl flex items-center justify-center"><span className="mr-2 text-3xl">📝</span> ワークシートが かけた！</button>
+            </div>
+          </div>
+        );
+      }
+
+      if (step === 'NOTEBOOK_STAMP') {
+        return (
+          <div className="min-h-screen bg-yellow-50 p-4 flex items-center justify-center">
+            <div className="max-w-2xl w-full bg-white rounded-3xl shadow-xl p-8 border-4 border-yellow-200">
+              <div className="flex items-center justify-center text-yellow-600 mb-6">
+                <span className="mr-4 text-4xl">📖</span><h2 className="text-3xl font-bold">ワークシートに かきましょう</h2>
+              </div>
+              <div className="bg-white border-2 border-gray-300 p-8 rounded-lg shadow-inner mb-8 bg-[url('https://www.transparenttextures.com/patterns/lined-paper-2.png')]">
+                <p className="text-gray-600 mb-4 font-bold text-lg">あとで はっぴょうするので、じぶんの いったことを ワークシートに うつしてね。</p>
+                <div className="text-xl font-mono text-gray-800 leading-loose border-b-2 border-dashed border-gray-400 mb-4 pb-2">
+                  My special day is <span className="font-bold text-blue-700 bg-blue-100 px-2 py-1 rounded shadow-sm">{MONTHS[selectedMonth - 1]} {getOrdinal(selectedDate)}</span>.<br/>
+                  <span className="font-bold text-blue-700 bg-blue-100 px-3 py-1 rounded shadow-sm inline-block mt-2">{translatedReason}</span>
+                </div>
+                <div className="text-sm text-gray-500 mt-2">（にほんごのりゆう：その日は{reason}です。）</div>
+              </div>
+              <div className="bg-red-50 p-6 rounded-xl border border-red-200 text-center mb-8">
+                <p className="text-red-700 font-bold text-lg mb-2">先生を よんで スタンプを もらいましょう！</p>
+                <p className="text-gray-600">スタンプを もらったら、下のボタンを おしてね。</p>
               </div>
               <button onClick={prepareQuiz} className="w-full bg-yellow-500 hover:bg-yellow-600 text-white text-2xl font-bold py-4 rounded-xl flex items-center justify-center"><span className="mr-2 text-3xl">💮</span> スタンプをもらった！</button>
             </div>
@@ -760,7 +818,8 @@
       }
 
       if (step === 'MINIGAME') {
-        return <MiniGame monster={currentGachaMonster} onFinish={(coins) => {
+        const gameMonsters = collections.length > 0 ? collections : (currentGachaMonster ? [currentGachaMonster] : []);
+        return <MiniGame monsters={gameMonsters} onFinish={(coins) => {
           setLastEarnedCoins(coins);
           const newTotal = totalCoins + coins;
           saveData(playCount, collections, newTotal);
