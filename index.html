@@ -321,10 +321,23 @@
           const data = await response.json();
           let text = data.responseData.translatedText;
           if (text) {
-            // 翻訳結果の先頭によく付く主語・動詞などを削除する
-            text = text.replace(/^(the day is|that day is|it is|it's|that is|this is|because it is|because it's|because)\s+/i, '');
+            // 翻訳結果の先頭によく付く主語・動詞・過去形などを削除する
+            text = text.replace(/^(because\s+)?(it is|it's|it was|that is|that's|that was|this is|this was|the day is|the day was|that day is|that day was)\s+/i, '').trim();
+            text = text.replace(/^because\s+/i, '').trim();
+            
+            // 祝日や記念日などの固有名詞が大文字のまま残るように、
+            // 一般的な冠詞や代名詞 (a, an, the, my など) が先頭の場合のみ小文字にする
+            const firstWordMatch = text.match(/^[a-zA-Z]+/);
+            if (firstWordMatch) {
+              const firstWord = firstWordMatch[0].toLowerCase();
+              const wordsToLower = ["a", "an", "the", "my", "our", "your", "his", "her", "their"];
+              if (wordsToLower.includes(firstWord)) {
+                text = text.charAt(0).toLowerCase() + text.slice(1);
+              }
+            }
+            
             // 強制的に It's から始める
-            text = `It's ${text.charAt(0).toLowerCase() + text.slice(1)}`;
+            text = `It's ${text}`;
             setTranslatedReason(text);
           } else {
             setTranslatedReason("It's a special day.");
